@@ -184,11 +184,14 @@ function updateSetup(){
 // ---------- ocena ----------
 const strip=s=>s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/ł/g,'l').replace(/[^\p{L}\p{N}\s]/gu,'').replace(/\s+/g,' ').trim();
 const lc=s=>s.toLowerCase().replace(/\s+/g,' ').trim();
-function judge(input,targets){
-  const a=lc(input);
-  for(const t of targets) if(lc(t)===a) return {ok:true,exact:true};
-  const n=strip(input);
-  for(const t of targets) if(strip(t)===n) return {ok:true,exact:false,full:t};
+// rodzajnik na początku odpowiedzi hiszpańskiej można pominąć (la cola = cola); "lo" celowo pominięte (lo siento)
+const ART=/^(el|la|los|las|un|una|unos|unas)\s+(?=\S)/i;
+function judge(input,targets,lang){
+  const a=lc(input),n=strip(input);
+  const opts=[];
+  for(const t of targets){opts.push([t,t]);if(lang==='es'&&ART.test(t)) opts.push([t.replace(ART,''),t])}
+  for(const [t,o] of opts) if(lc(t)===a) return t===o?{ok:true,exact:true}:{ok:true,exact:false,full:o};
+  for(const [t,o] of opts) if(strip(t)===n) return {ok:true,exact:false,full:o};
   return {ok:false};
 }
 
@@ -224,12 +227,12 @@ function reinsert(c,gap){S.queue.splice(Math.min(gap,S.queue.length),0,c)}
 function check(){
   const c=S.cur,val=$('answer').value;
   if(!val.trim()) return;
-  const r=judge(val,targets(c));
+  const r=judge(val,targets(c),dir==='pl2es'?'es':'pl');
   const all=targets(c).join(' / ');
   const res=$('result');
   if(r.ok){
     res.className='res ok';
-    res.innerHTML='✓ Dobrze'+(r.exact?'':'<small>Pełna pisownia: '+esc(r.full)+'</small>')+(targets(c).length>1?'<small>Wszystkie odpowiedniki: '+esc(all)+'</small>':'');
+    res.innerHTML='✓ Dobrze'+(r.exact?'':'<small>Pełna forma: '+esc(r.full)+'</small>')+(targets(c).length>1?'<small>Wszystkie odpowiedniki: '+esc(all)+'</small>':'');
     S.done++;
   }else{
     c.errors++;c.phase='retry';c.everWrong=true;
