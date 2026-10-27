@@ -26,7 +26,7 @@ input[type=text],select{width:100%;min-height:48px;padding:0 12px;border-radius:
 label{display:block;font-size:.85rem;color:var(--muted);margin:10px 0 4px}
 .row{display:flex;gap:8px}.row>*{flex:1}
 .hidden{display:none}
-.word{font-size:2rem;font-weight:700;text-align:center;margin:18px 0;word-break:break-word}
+.word{font-size:1.7rem;font-weight:700;text-align:center;margin:18px 0;word-break:break-word}
 .hint{color:var(--muted);font-size:.85rem;text-align:center}
 .bar{height:6px;background:var(--line);border-radius:3px;overflow:hidden;margin-bottom:14px}
 .bar i{display:block;height:100%;background:var(--accent);width:0}
@@ -54,10 +54,25 @@ ul.words li span{flex:1;word-break:break-word}
       <button id="dirPlEs" class="active">PL → ES</button>
       <button id="dirEsPl">ES → PL</button>
     </div>
-    <label>Liczba słówek w cyklu</label>
-    <select id="size">
-      <option value="10">10</option><option value="20">20</option><option value="all">Wszystkie</option>
+    <label>Z jakiego okresu (kiedy dodane)</label>
+    <select id="range">
+      <option value="all">Cała baza</option>
+      <option value="1">Dzisiaj</option>
+      <option value="7">Ostatnie 7 dni</option>
+      <option value="14">Ostatnie 14 dni</option>
+      <option value="30">Ostatni miesiąc (30 dni)</option>
+      <option value="custom">Własny zakres dat…</option>
     </select>
+    <div id="customRange" class="row hidden" style="margin-top:8px">
+      <div><label>Od</label><input type="date" id="dFrom"></div>
+      <div><label>Do</label><input type="date" id="dTo"></div>
+    </div>
+    <p class="muted" id="poolInfo"></p>
+    <label>Liczba słówek w cyklu</label>
+    <div class="row">
+      <input type="number" id="size" min="1" inputmode="numeric" value="10">
+      <button id="sizeAll" style="flex:0 0 auto">Wszystkie</button>
+    </div>
     <p class="muted" id="setupMsg"></p>
     <button class="primary" id="start" style="width:100%">Start</button>
   </div>
@@ -69,7 +84,7 @@ ul.words li span{flex:1;word-break:break-word}
   <div class="card">
     <div class="hint" id="qLabel"></div>
     <div class="word" id="qWord"></div>
-    <input type="text" id="answer" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="Wpisz tłumaczenie">
+    <input type="text" id="answer" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="Wpisz tłumaczenie (słowo lub całe wyrażenie)">
     <div id="result" class="res"></div>
     <button class="primary" id="go" style="width:100%">Sprawdź</button>
     <button id="quit" class="small" style="width:100%;margin-top:10px">Zakończ cykl</button>
@@ -97,10 +112,10 @@ ul.words li span{flex:1;word-break:break-word}
     <p class="muted" id="baseMsg"></p>
   </div>
   <div class="card">
-    <label>Dodaj słówko</label>
-    <input type="text" id="addPl" placeholder="Polski (np. duży/wielki)" autocapitalize="off" autocorrect="off" spellcheck="false">
+    <label>Dodaj słówko lub wyrażenie</label>
+    <input type="text" id="addPl" placeholder="Polski (np. odkręcić kran)" autocapitalize="off" autocorrect="off" spellcheck="false">
     <div style="height:8px"></div>
-    <input type="text" id="addEs" placeholder="Hiszpański (np. grande)" autocapitalize="off" autocorrect="off" spellcheck="false">
+    <input type="text" id="addEs" placeholder="Hiszpański (np. abrir el grifo)" autocapitalize="off" autocorrect="off" spellcheck="false">
     <button class="primary" id="add" style="width:100%;margin-top:10px">Dodaj</button>
   </div>
   <div class="card">
@@ -118,25 +133,56 @@ let dir='pl2es';
 let S=null;             // sesja nauki
 
 // ---------- baza ----------
-function parse(text){
+const today=()=>new Date().toLocaleDateString('sv');
+const isDate=s=>/^\d{4}-\d{2}-\d{2}$/.test(s);
+// linia: polski;hiszpański[;RRRR-MM-DD] — brak daty => def
+function parse(text,def){
   const out=[];
   for(const raw of text.split(/\r?\n/)){
     const line=raw.trim();
     if(!line||line.startsWith('#')) continue;
-    const i=line.indexOf(';'); if(i<0) continue;
-    const pl=line.slice(0,i).split('/').map(s=>s.trim()).filter(Boolean);
-    const es=line.slice(i+1).split('/').map(s=>s.trim()).filter(Boolean);
-    if(pl.length&&es.length) out.push({pl,es});
+    const p=line.split(';');if(p.length<2) continue;
+    let date=def||null;
+    if(p.length>=3&&isDate(p[p.length-1].trim())) date=p.pop().trim();
+    const pl=p[0].split('/').map(s=>s.trim()).filter(Boolean);
+    const es=p.slice(1).join(';').split('/').map(s=>s.trim()).filter(Boolean);
+    if(pl.length&&es.length) out.push({pl,es,date});
   }
   return out;
 }
-const fmt=w=>w.pl.join('/')+';'+w.es.join('/');
-function serialize(){return '# Format: polski;hiszpański   (kilka odpowiedników rozdzielaj znakiem /)\n'+words.map(fmt).join('\n')+'\n'}
+const keyOf=w=>w.pl.join('/')+';'+w.es.join('/');
+const fmt=w=>keyOf(w)+(w.date?';'+w.date:'');
+function serialize(){return '# Format: polski;hiszpański;data dodania RRRR-MM-DD   (kilka odpowiedników rozdzielaj znakiem /, data jest opcjonalna)\n'+words.map(fmt).join('\n')+'\n'}
 function save(){try{localStorage.setItem(KEY,serialize())}catch(e){}}
-function load(){try{const t=localStorage.getItem(KEY);if(t) words=parse(t)}catch(e){}}
+// zapis z opóźnieniem — seria zmian = jeden zapis; na wyjściu zapisujemy od razu
+let st=null;
+function saveSoon(){clearTimeout(st);st=setTimeout(()=>{st=null;save()},300)}
+function flush(){if(st){clearTimeout(st);st=null;save()}}
+addEventListener('pagehide',flush);
+document.addEventListener('visibilitychange',()=>{if(document.hidden)flush()});
+// indeks do szybkiego sprawdzania duplikatów; przy wczytaniu usuwa też powtórzenia
+let keys=new Set();
+function reindex(){keys=new Set();words=words.filter(w=>{const k=keyOf(w);if(keys.has(k))return false;keys.add(k);return true})}
+function load(){try{const t=localStorage.getItem(KEY);if(t){words=parse(t,today());reindex()}}catch(e){}}
+
+// ---------- zakres dat ----------
+function addDays(n){const d=new Date();d.setDate(d.getDate()+n);return d.toLocaleDateString('sv')}
+function pool(){
+  const r=$('range').value;
+  if(r==='all') return words;
+  let from,to='9999-12-31';
+  if(r==='custom'){from=$('dFrom').value||'0000-01-01';to=$('dTo').value||to}
+  else from=addDays(-(+r-1));
+  return words.filter(w=>w.date&&w.date>=from&&w.date<=to);
+}
+function updateSetup(){
+  $('customRange').classList.toggle('hidden',$('range').value!=='custom');
+  const n=pool().length;
+  $('poolInfo').textContent='Pasuje słówek: '+n+' (z '+words.length+' w bazie)';
+}
 
 // ---------- ocena ----------
-const strip=s=>s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/ł/g,'l').replace(/[¿¡?!.,]/g,'').replace(/\s+/g,' ').trim();
+const strip=s=>s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/ł/g,'l').replace(/[^\p{L}\p{N}\s]/gu,'').replace(/\s+/g,' ').trim();
 const lc=s=>s.toLowerCase().replace(/\s+/g,' ').trim();
 function judge(input,targets){
   const a=lc(input);
@@ -147,12 +193,16 @@ function judge(input,targets){
 }
 
 // ---------- sesja ----------
-const GAPS=[3,5,8], REVIEW_GAP=4;
-function shuffle(a){for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]]}return a}
+const GAPS=[3,5,8];
+// losuje n pierwszych elementów (częściowy Fisher–Yates) — nie miesza całej bazy
+function sample(a,n){a=a.slice();for(let i=0;i<n;i++){const j=i+Math.floor(Math.random()*(a.length-i));[a[i],a[j]]=[a[j],a[i]]}return a.slice(0,n)}
 function startSession(){
-  if(!words.length){$('setupMsg').textContent='Baza jest pusta — dodaj słówka w zakładce Baza.';return}
-  const n=$('size').value==='all'?words.length:Math.min(+$('size').value,words.length);
-  const pick=shuffle(words.slice()).slice(0,n);
+  const p=pool();
+  if(!p.length){$('setupMsg').textContent=words.length?'Brak słówek w wybranym okresie.':'Baza jest pusta — dodaj słówka w zakładce Baza.';return}
+  $('setupMsg').textContent='';
+  const want=Math.floor(+$('size').value);
+  const n=want>=1?Math.min(want,p.length):p.length;
+  const pick=sample(p,n);
   S={queue:pick.map(w=>({w,phase:'new',errors:0})),total:n,done:0,cards:[],cur:null,checked:false};
   S.cards=S.queue.slice();
   show('quiz');nextCard();
@@ -180,8 +230,7 @@ function check(){
   if(r.ok){
     res.className='res ok';
     res.innerHTML='✓ Dobrze'+(r.exact?'':'<small>Pełna pisownia: '+esc(r.full)+'</small>')+(targets(c).length>1?'<small>Wszystkie odpowiedniki: '+esc(all)+'</small>':'');
-    if(c.phase==='review'){S.done++}
-    else{c.phase='review';reinsert(c,REVIEW_GAP)}
+    S.done++;
   }else{
     c.errors++;c.phase='retry';c.everWrong=true;
     res.className='res bad';
@@ -211,7 +260,10 @@ function show(id){
   $('tabLearn').classList.toggle('active',id!=='base');
   $('tabBase').classList.toggle('active',id==='base');
   if(id==='base') renderList();
+  if(id==='setup') updateSetup();
 }
+$('range').onchange=$('dFrom').onchange=$('dTo').onchange=updateSetup;
+$('sizeAll').onclick=()=>{$('size').value=Math.max(pool().length,1)};
 $('tabLearn').onclick=()=>show(S?'quiz':'setup');
 $('tabBase').onclick=()=>show('base');
 function setDir(d){dir=d;$('dirPlEs').classList.toggle('active',d==='pl2es');$('dirEsPl').classList.toggle('active',d==='es2pl')}
@@ -219,27 +271,38 @@ $('dirPlEs').onclick=()=>setDir('pl2es');
 $('dirEsPl').onclick=()=>setDir('es2pl');
 
 // ---------- zarządzanie bazą ----------
+// lista pokazuje porcjami (PAGE), a tekst do szukania liczony jest raz na słówko
+const PAGE=50;let shown=PAGE;
+const sx=w=>w._s||(w._s=strip(w.pl.join('/')+' '+w.es.join('/')));
 function renderList(){
   $('count').textContent=words.length;
   const f=strip($('filter').value);
-  const ul=$('list');ul.innerHTML='';
-  words.forEach((w,i)=>{
+  const found=f?words.filter(w=>sx(w).includes(f)):words;
+  const ul=$('list'),frag=document.createDocumentFragment();
+  found.slice(0,shown).forEach(w=>{
     const t=w.pl.join('/')+' = '+w.es.join('/');
-    if(f&&!strip(t).includes(f)) return;
     const li=document.createElement('li');
-    li.innerHTML='<span>'+esc(t)+'</span>';
+    li.innerHTML='<span>'+esc(t)+(w.date?' <small class="muted">'+w.date+'</small>':'')+'</span>';
     const b=document.createElement('button');b.className='small danger';b.textContent='Zapomnij';
-    b.onclick=()=>{if(confirm('Usunąć „'+t+'” z bazy?')){words.splice(i,1);save();renderList()}};
-    li.appendChild(b);ul.appendChild(li);
+    b.onclick=()=>{if(confirm('Usunąć „'+t+'” z bazy?')){words.splice(words.indexOf(w),1);keys.delete(keyOf(w));saveSoon();renderList()}};
+    li.appendChild(b);frag.appendChild(li);
   });
-  if(!ul.children.length) ul.innerHTML='<li class="muted">Brak słówek.</li>';
+  ul.replaceChildren(frag);
+  if(!found.length) ul.innerHTML='<li class="muted">Brak słówek.</li>';
+  else if(found.length>shown){
+    const li=document.createElement('li');
+    li.innerHTML='<span class="muted">Pokazano '+shown+' z '+found.length+'</span>';
+    const b=document.createElement('button');b.className='small';b.textContent='Pokaż więcej';
+    b.onclick=()=>{shown+=PAGE;renderList()};
+    li.appendChild(b);ul.appendChild(li);
+  }
 }
-$('filter').oninput=renderList;
+let ft;$('filter').oninput=()=>{clearTimeout(ft);ft=setTimeout(()=>{shown=PAGE;renderList()},200)};
 $('add').onclick=()=>{
-  const w=parse($('addPl').value.trim()+';'+$('addEs').value.trim())[0];
+  const w=parse($('addPl').value.trim()+';'+$('addEs').value.trim(),today())[0];
   if(!w){$('baseMsg').textContent='Wpisz słówko po obu stronach.';return}
-  if(words.some(x=>fmt(x)===fmt(w))){$('baseMsg').textContent='Takie słówko już jest.';return}
-  words.push(w);save();renderList();
+  if(keys.has(keyOf(w))){$('baseMsg').textContent='Takie słówko już jest.';return}
+  words.push(w);keys.add(keyOf(w));saveSoon();renderList();
   $('addPl').value='';$('addEs').value='';$('addPl').focus();
   $('baseMsg').textContent='Dodano. Pamiętaj pobrać slowka.txt, żeby zachować zmiany w pliku.';
 };
@@ -247,10 +310,12 @@ $('file').onchange=e=>{
   const f=e.target.files[0];if(!f) return;
   const r=new FileReader();
   r.onload=()=>{
-    const w=parse(String(r.result));
+    const w=parse(String(r.result),null);
     if(!w.length){$('baseMsg').textContent='Nie znaleziono poprawnych linii w pliku.';return}
+    const known=new Map(words.map(x=>[keyOf(x),x.date]));
+    w.forEach(x=>{if(!x.date) x.date=known.get(keyOf(x))||today()});
     if(words.length&&!confirm('Wczytanie zastąpi obecną bazę ('+words.length+' słówek) plikiem ('+w.length+'). Kontynuować?')) return;
-    words=w;save();renderList();$('baseMsg').textContent='Wczytano '+w.length+' słówek.';
+    words=w;reindex();shown=PAGE;saveSoon();renderList();$('baseMsg').textContent='Wczytano '+w.length+' słówek.';
   };
   r.readAsText(f,'utf-8');e.target.value='';
 };
@@ -263,6 +328,7 @@ $('download').onclick=()=>{
 // ---------- start ----------
 load();
 $('count').textContent=words.length;
+updateSetup();
 if(!words.length){$('setupMsg').textContent='Baza jest pusta — wczytaj slowka.txt w zakładce Baza.'}
 if('serviceWorker' in navigator&&location.protocol.startsWith('http')) navigator.serviceWorker.register('sw.js').catch(()=>{});
 </script>
