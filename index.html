@@ -1,0 +1,270 @@
+<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#c0392b">
+<link rel="manifest" href="manifest.json">
+<title>Słówka ES</title>
+<style>
+:root{--bg:#faf7f2;--card:#fff;--text:#1f1d1a;--muted:#6f6a62;--accent:#c0392b;--ok:#1e8449;--bad:#c0392b;--line:#e4ded3}
+@media (prefers-color-scheme:dark){:root{--bg:#171513;--card:#242120;--text:#f0ebe3;--muted:#a39d93;--accent:#e2574a;--ok:#4cc27a;--bad:#ff7b6e;--line:#38342f}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:18px/1.4 system-ui,sans-serif}
+main{max-width:560px;margin:0 auto;padding:16px}
+h1{font-size:1.3rem;margin:0 0 12px}
+.tabs{display:flex;gap:8px;margin-bottom:16px}
+.tabs button{flex:1}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px;margin-bottom:14px}
+button,select,input{font:inherit;color:inherit}
+button{min-height:48px;padding:0 16px;border-radius:12px;border:1px solid var(--line);background:var(--card);cursor:pointer}
+button.primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
+button.active{border-color:var(--accent);color:var(--accent);font-weight:600}
+button.danger{color:var(--bad)}
+button.small{min-height:36px;padding:0 10px;font-size:.85rem}
+input[type=text],select{width:100%;min-height:48px;padding:0 12px;border-radius:12px;border:1px solid var(--line);background:var(--bg)}
+label{display:block;font-size:.85rem;color:var(--muted);margin:10px 0 4px}
+.row{display:flex;gap:8px}.row>*{flex:1}
+.hidden{display:none}
+.word{font-size:2rem;font-weight:700;text-align:center;margin:18px 0;word-break:break-word}
+.hint{color:var(--muted);font-size:.85rem;text-align:center}
+.bar{height:6px;background:var(--line);border-radius:3px;overflow:hidden;margin-bottom:14px}
+.bar i{display:block;height:100%;background:var(--accent);width:0}
+.res{margin:12px 0;font-size:1.05rem}.res.ok{color:var(--ok)}.res.bad{color:var(--bad)}
+.res small{display:block;color:var(--muted);font-size:.85rem}
+ul.words{list-style:none;padding:0;margin:8px 0 0;max-height:50vh;overflow:auto}
+ul.words li{display:flex;align-items:center;gap:8px;padding:8px 0;border-top:1px solid var(--line)}
+ul.words li span{flex:1;word-break:break-word}
+.muted{color:var(--muted);font-size:.9rem}
+</style>
+</head>
+<body>
+<main>
+<h1>Słówka hiszpańskie</h1>
+<div class="tabs">
+  <button id="tabLearn" class="active">Nauka</button>
+  <button id="tabBase">Baza (<span id="count">0</span>)</button>
+</div>
+
+<!-- NAUKA: ustawienia -->
+<section id="setup">
+  <div class="card">
+    <label>Kierunek</label>
+    <div class="row">
+      <button id="dirPlEs" class="active">PL → ES</button>
+      <button id="dirEsPl">ES → PL</button>
+    </div>
+    <label>Liczba słówek w cyklu</label>
+    <select id="size">
+      <option value="10">10</option><option value="20">20</option><option value="all">Wszystkie</option>
+    </select>
+    <p class="muted" id="setupMsg"></p>
+    <button class="primary" id="start" style="width:100%">Start</button>
+  </div>
+</section>
+
+<!-- NAUKA: karta -->
+<section id="quiz" class="hidden">
+  <div class="bar"><i id="bar"></i></div>
+  <div class="card">
+    <div class="hint" id="qLabel"></div>
+    <div class="word" id="qWord"></div>
+    <input type="text" id="answer" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="Wpisz tłumaczenie">
+    <div id="result" class="res"></div>
+    <button class="primary" id="go" style="width:100%">Sprawdź</button>
+    <button id="quit" class="small" style="width:100%;margin-top:10px">Zakończ cykl</button>
+  </div>
+</section>
+
+<!-- NAUKA: podsumowanie -->
+<section id="summary" class="hidden">
+  <div class="card">
+    <h1>Koniec cyklu</h1>
+    <p id="sumText"></p>
+    <div id="sumHard"></div>
+    <button class="primary" id="again" style="width:100%;margin-top:10px">Kolejny cykl</button>
+  </div>
+</section>
+
+<!-- BAZA -->
+<section id="base" class="hidden">
+  <div class="card">
+    <label>Wczytaj slowka.txt</label>
+    <input type="file" id="file" accept=".txt,text/plain">
+    <div class="row" style="margin-top:12px">
+      <button id="download">Pobierz slowka.txt</button>
+    </div>
+    <p class="muted" id="baseMsg"></p>
+  </div>
+  <div class="card">
+    <label>Dodaj słówko</label>
+    <input type="text" id="addPl" placeholder="Polski (np. duży/wielki)" autocapitalize="off" autocorrect="off" spellcheck="false">
+    <div style="height:8px"></div>
+    <input type="text" id="addEs" placeholder="Hiszpański (np. grande)" autocapitalize="off" autocorrect="off" spellcheck="false">
+    <button class="primary" id="add" style="width:100%;margin-top:10px">Dodaj</button>
+  </div>
+  <div class="card">
+    <input type="text" id="filter" placeholder="Szukaj w bazie…" autocapitalize="off" spellcheck="false">
+    <ul class="words" id="list"></ul>
+  </div>
+</section>
+</main>
+
+<script>
+const KEY='slowka_es_v1';
+const $=id=>document.getElementById(id);
+let words=[];           // {pl:[..], es:[..]}
+let dir='pl2es';
+let S=null;             // sesja nauki
+
+// ---------- baza ----------
+function parse(text){
+  const out=[];
+  for(const raw of text.split(/\r?\n/)){
+    const line=raw.trim();
+    if(!line||line.startsWith('#')) continue;
+    const i=line.indexOf(';'); if(i<0) continue;
+    const pl=line.slice(0,i).split('/').map(s=>s.trim()).filter(Boolean);
+    const es=line.slice(i+1).split('/').map(s=>s.trim()).filter(Boolean);
+    if(pl.length&&es.length) out.push({pl,es});
+  }
+  return out;
+}
+const fmt=w=>w.pl.join('/')+';'+w.es.join('/');
+function serialize(){return '# Format: polski;hiszpański   (kilka odpowiedników rozdzielaj znakiem /)\n'+words.map(fmt).join('\n')+'\n'}
+function save(){try{localStorage.setItem(KEY,serialize())}catch(e){}}
+function load(){try{const t=localStorage.getItem(KEY);if(t) words=parse(t)}catch(e){}}
+
+// ---------- ocena ----------
+const strip=s=>s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/ł/g,'l').replace(/[¿¡?!.,]/g,'').replace(/\s+/g,' ').trim();
+const lc=s=>s.toLowerCase().replace(/\s+/g,' ').trim();
+function judge(input,targets){
+  const a=lc(input);
+  for(const t of targets) if(lc(t)===a) return {ok:true,exact:true};
+  const n=strip(input);
+  for(const t of targets) if(strip(t)===n) return {ok:true,exact:false,full:t};
+  return {ok:false};
+}
+
+// ---------- sesja ----------
+const GAPS=[3,5,8], REVIEW_GAP=4;
+function shuffle(a){for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]]}return a}
+function startSession(){
+  if(!words.length){$('setupMsg').textContent='Baza jest pusta — dodaj słówka w zakładce Baza.';return}
+  const n=$('size').value==='all'?words.length:Math.min(+$('size').value,words.length);
+  const pick=shuffle(words.slice()).slice(0,n);
+  S={queue:pick.map(w=>({w,phase:'new',errors:0})),total:n,done:0,cards:[],cur:null,checked:false};
+  S.cards=S.queue.slice();
+  show('quiz');nextCard();
+}
+const prompts=c=>dir==='pl2es'?c.w.pl:c.w.es;
+const targets=c=>dir==='pl2es'?c.w.es:c.w.pl;
+function nextCard(){
+  if(!S.queue.length) return finish();
+  S.cur=S.queue.shift();S.checked=false;
+  $('qLabel').textContent=dir==='pl2es'?'Po polsku → wpisz po hiszpańsku':'Po hiszpańsku → wpisz po polsku';
+  $('qWord').textContent=prompts(S.cur).join(' / ');
+  $('answer').value='';$('answer').disabled=false;
+  $('result').className='res';$('result').innerHTML='';
+  $('go').textContent='Sprawdź';
+  $('bar').style.width=(S.done/S.total*100)+'%';
+  $('answer').focus();
+}
+function reinsert(c,gap){S.queue.splice(Math.min(gap,S.queue.length),0,c)}
+function check(){
+  const c=S.cur,val=$('answer').value;
+  if(!val.trim()) return;
+  const r=judge(val,targets(c));
+  const all=targets(c).join(' / ');
+  const res=$('result');
+  if(r.ok){
+    res.className='res ok';
+    res.innerHTML='✓ Dobrze'+(r.exact?'':'<small>Pełna pisownia: '+esc(r.full)+'</small>')+(targets(c).length>1?'<small>Wszystkie odpowiedniki: '+esc(all)+'</small>':'');
+    if(c.phase==='review'){S.done++}
+    else{c.phase='review';reinsert(c,REVIEW_GAP)}
+  }else{
+    c.errors++;c.phase='retry';c.everWrong=true;
+    res.className='res bad';
+    res.innerHTML='✗ Poprawnie: <b>'+esc(all)+'</b><small>Twoja odpowiedź: '+esc(val.trim())+'</small>';
+    reinsert(c,GAPS[Math.min(c.errors-1,GAPS.length-1)]);
+  }
+  $('answer').disabled=true;S.checked=true;$('go').textContent='Dalej';$('go').focus();
+  $('bar').style.width=(S.done/S.total*100)+'%';
+}
+function finish(){
+  const hard=S.cards.filter(c=>c.everWrong);
+  $('sumText').textContent='Bez błędu: '+(S.cards.length-hard.length)+' z '+S.cards.length+'.';
+  $('sumHard').innerHTML=hard.length?'<b>Do powtórki:</b><ul>'+hard.map(c=>'<li>'+esc(c.w.pl.join('/'))+' = '+esc(c.w.es.join('/'))+' ('+c.errors+'× błąd)</li>').join('')+'</ul>':'<p class="muted">Wszystko poprawnie. 🎉</p>';
+  S=null;show('summary');
+}
+function esc(s){return s.replace(/[&<>"]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m]))}
+$('go').onclick=()=>S.checked?nextCard():check();
+$('answer').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();$('go').onclick()}});
+document.addEventListener('keydown',e=>{if(e.key==='Enter'&&S&&S.checked&&document.activeElement!==$('go')){$('go').onclick()}});
+$('quit').onclick=()=>{if(S&&confirm('Zakończyć cykl?')){S=null;show('setup')}};
+$('start').onclick=startSession;
+$('again').onclick=()=>show('setup');
+
+// ---------- widoki ----------
+function show(id){
+  for(const s of ['setup','quiz','summary','base']) $(s).classList.toggle('hidden',s!==id);
+  $('tabLearn').classList.toggle('active',id!=='base');
+  $('tabBase').classList.toggle('active',id==='base');
+  if(id==='base') renderList();
+}
+$('tabLearn').onclick=()=>show(S?'quiz':'setup');
+$('tabBase').onclick=()=>show('base');
+function setDir(d){dir=d;$('dirPlEs').classList.toggle('active',d==='pl2es');$('dirEsPl').classList.toggle('active',d==='es2pl')}
+$('dirPlEs').onclick=()=>setDir('pl2es');
+$('dirEsPl').onclick=()=>setDir('es2pl');
+
+// ---------- zarządzanie bazą ----------
+function renderList(){
+  $('count').textContent=words.length;
+  const f=strip($('filter').value);
+  const ul=$('list');ul.innerHTML='';
+  words.forEach((w,i)=>{
+    const t=w.pl.join('/')+' = '+w.es.join('/');
+    if(f&&!strip(t).includes(f)) return;
+    const li=document.createElement('li');
+    li.innerHTML='<span>'+esc(t)+'</span>';
+    const b=document.createElement('button');b.className='small danger';b.textContent='Zapomnij';
+    b.onclick=()=>{if(confirm('Usunąć „'+t+'” z bazy?')){words.splice(i,1);save();renderList()}};
+    li.appendChild(b);ul.appendChild(li);
+  });
+  if(!ul.children.length) ul.innerHTML='<li class="muted">Brak słówek.</li>';
+}
+$('filter').oninput=renderList;
+$('add').onclick=()=>{
+  const w=parse($('addPl').value.trim()+';'+$('addEs').value.trim())[0];
+  if(!w){$('baseMsg').textContent='Wpisz słówko po obu stronach.';return}
+  if(words.some(x=>fmt(x)===fmt(w))){$('baseMsg').textContent='Takie słówko już jest.';return}
+  words.push(w);save();renderList();
+  $('addPl').value='';$('addEs').value='';$('addPl').focus();
+  $('baseMsg').textContent='Dodano. Pamiętaj pobrać slowka.txt, żeby zachować zmiany w pliku.';
+};
+$('file').onchange=e=>{
+  const f=e.target.files[0];if(!f) return;
+  const r=new FileReader();
+  r.onload=()=>{
+    const w=parse(String(r.result));
+    if(!w.length){$('baseMsg').textContent='Nie znaleziono poprawnych linii w pliku.';return}
+    if(words.length&&!confirm('Wczytanie zastąpi obecną bazę ('+words.length+' słówek) plikiem ('+w.length+'). Kontynuować?')) return;
+    words=w;save();renderList();$('baseMsg').textContent='Wczytano '+w.length+' słówek.';
+  };
+  r.readAsText(f,'utf-8');e.target.value='';
+};
+$('download').onclick=()=>{
+  const url=URL.createObjectURL(new Blob([serialize()],{type:'text/plain;charset=utf-8'}));
+  const a=document.createElement('a');a.href=url;a.download='slowka.txt';document.body.appendChild(a);a.click();a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url),1000);
+};
+
+// ---------- start ----------
+load();
+$('count').textContent=words.length;
+if(!words.length){$('setupMsg').textContent='Baza jest pusta — wczytaj slowka.txt w zakładce Baza.'}
+if('serviceWorker' in navigator&&location.protocol.startsWith('http')) navigator.serviceWorker.register('sw.js').catch(()=>{});
+</script>
+</body>
+</html>
