@@ -133,6 +133,16 @@ let dir='pl2es';
 let S=null;             // sesja nauki
 
 // ---------- baza ----------
+// dzieli odpowiedniki znakiem / (ale nie wewnątrz nawiasów)
+function splitAlt(s){
+  const out=[];let d=0,cur='';
+  for(const ch of s){
+    if(ch==='(') d++; else if(ch===')') d=Math.max(0,d-1);
+    if(ch==='/'&&d===0){out.push(cur);cur=''} else cur+=ch;
+  }
+  out.push(cur);
+  return out.map(x=>x.trim()).filter(Boolean);
+}
 const today=()=>new Date().toLocaleDateString('sv');
 const isDate=s=>/^\d{4}-\d{2}-\d{2}$/.test(s);
 // linia: polski;hiszpański[;RRRR-MM-DD] — brak daty => def
@@ -144,8 +154,8 @@ function parse(text,def){
     const p=line.split(';');if(p.length<2) continue;
     let date=def||null;
     if(p.length>=3&&isDate(p[p.length-1].trim())) date=p.pop().trim();
-    const pl=p[0].split('/').map(s=>s.trim()).filter(Boolean);
-    const es=p.slice(1).join(';').split('/').map(s=>s.trim()).filter(Boolean);
+    const pl=splitAlt(p[0]);
+    const es=splitAlt(p.slice(1).join(';'));
     if(pl.length&&es.length) out.push({pl,es,date});
   }
   return out;
@@ -184,14 +194,33 @@ function updateSetup(){
 // ---------- ocena ----------
 const strip=s=>s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/ł/g,'l').replace(/[^\p{L}\p{N}\s]/gu,'').replace(/\s+/g,' ').trim();
 const lc=s=>s.toLowerCase().replace(/\s+/g,' ').trim();
-// rodzajnik na początku odpowiedzi hiszpańskiej można pominąć (la cola = cola); "lo" celowo pominięte (lo siento)
-const ART=/^(el|la|los|las|un|una|unos|unas)\s+(?=\S)/i;
+// rodzajniki w odpowiedzi hiszpańskiej są opcjonalne w dowolnym miejscu (me gusta la chica = me gusta chica);
+// wpisany rodzajnik musi być jednak właściwy. "lo" celowo pominięte (lo siento).
+// Tekst w nawiasach to notatka: można go pominąć (lub wpisać bez nawiasów).
+const ARTS=new Set(['el','la','los','las','un','una','unos','unas']);
+const noPar=t=>t.replace(/\([^)]*\)/g,' ').replace(/\s+/g,' ').trim();
+const unPar=t=>t.replace(/[()]/g,'').replace(/\s+/g,' ').trim();
+// dopasowuje słowa odpowiedzi do słów wzorca; pominięte rodzajniki wzorca liczy. null = brak dopasowania
+function tokMatch(inp,tgt,skipArt){
+  let i=0,skipped=0;
+  for(const w of tgt){
+    if(i<inp.length&&w===inp[i]){i++;continue}
+    if(skipArt&&ARTS.has(strip(w))){skipped++;continue}
+    return null;
+  }
+  return i===inp.length?skipped:null;
+}
 function judge(input,targets,lang){
-  const a=lc(input),n=strip(input);
-  const opts=[];
-  for(const t of targets){opts.push([t,t]);if(lang==='es'&&ART.test(t)) opts.push([t.replace(ART,''),t])}
-  for(const [t,o] of opts) if(lc(t)===a) return t===o?{ok:true,exact:true}:{ok:true,exact:false,full:o};
-  for(const [t,o] of opts) if(strip(t)===n) return {ok:true,exact:false,full:o};
+  const skipArt=lang==='es';
+  const A=lc(input).split(' '),B=strip(input).split(' ').filter(Boolean);
+  const cands=[];
+  for(const orig of targets) for(const t of new Set([orig,noPar(orig),unPar(orig)])) if(t) cands.push([t,orig]);
+  for(const [t,o] of cands){
+    const sk=tokMatch(A,lc(t).split(' '),skipArt);
+    if(sk!==null) return sk===0&&t===o?{ok:true,exact:true}:{ok:true,exact:false,full:o};
+  }
+  for(const [t,o] of cands)
+    if(tokMatch(B,strip(t).split(' ').filter(Boolean),skipArt)!==null) return {ok:true,exact:false,full:o};
   return {ok:false};
 }
 
