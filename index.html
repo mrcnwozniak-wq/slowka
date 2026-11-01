@@ -119,9 +119,9 @@ ul.words li span{flex:1;word-break:break-word}
   </div>
   <div class="card">
     <label>Dodaj słówko lub wyrażenie</label>
-    <input type="text" id="addPl" placeholder="Polski (np. odkręcić kran)" autocapitalize="off" autocorrect="off" spellcheck="false">
-    <div style="height:8px"></div>
     <input type="text" id="addEs" placeholder="Hiszpański (np. abrir el grifo)" autocapitalize="off" autocorrect="off" spellcheck="false">
+    <div style="height:8px"></div>
+    <input type="text" id="addPl" placeholder="Polski (np. odkręcić kran)" autocapitalize="off" autocorrect="off" spellcheck="false">
     <button class="primary" id="add" style="width:100%;margin-top:10px">Dodaj</button>
   </div>
   <div class="card">
@@ -395,7 +395,7 @@ $('add').onclick=()=>{
   if(!w){$('baseMsg').textContent='Wpisz słówko po obu stronach.';return}
   if(keys.has(keyOf(w))){$('baseMsg').textContent='Takie słówko już jest.';return}
   words.push(w);keys.add(keyOf(w));changed();
-  $('addPl').value='';$('addEs').value='';$('addPl').focus();
+  $('addPl').value='';$('addEs').value='';$('addEs').focus();
   $('baseMsg').textContent='Dodano. Pamiętaj pobrać slowka.txt, żeby zachować zmiany w pliku.';
 };
 $('file').onchange=e=>{
