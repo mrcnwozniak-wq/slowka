@@ -25,7 +25,9 @@ button.small{min-height:36px;padding:0 10px;font-size:.85rem}
 input[type=text],select{width:100%;min-height:48px;padding:0 12px;border-radius:12px;border:1px solid var(--line);background:var(--bg)}
 label{display:block;font-size:.85rem;color:var(--muted);margin:10px 0 4px}
 .row{display:flex;gap:8px}.row>*{flex:1}
-.hidden{display:none}
+.hidden,.overlay.hidden{display:none}
+.overlay{position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;padding:16px;z-index:10}
+.overlay .card{width:100%;max-width:520px;margin:0}
 .word{font-size:1.7rem;font-weight:700;text-align:center;margin:18px 0;word-break:break-word}
 .hint{color:var(--muted);font-size:.85rem;text-align:center}
 .bar{height:6px;background:var(--line);border-radius:3px;overflow:hidden;margin-bottom:14px}
@@ -87,7 +89,11 @@ ul.words li span{flex:1;word-break:break-word}
     <input type="text" id="answer" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="Wpisz tłumaczenie (słowo lub całe wyrażenie)">
     <div id="result" class="res"></div>
     <button class="primary" id="go" style="width:100%">Sprawdź</button>
-    <button id="quit" class="small" style="width:100%;margin-top:10px">Zakończ cykl</button>
+    <div class="row" style="margin-top:10px">
+      <button id="qEdit" class="small">Edytuj</button>
+      <button id="qForget" class="small danger">Zapomnij</button>
+      <button id="quit" class="small">Zakończ cykl</button>
+    </div>
   </div>
 </section>
 
@@ -124,6 +130,21 @@ ul.words li span{flex:1;word-break:break-word}
   </div>
 </section>
 </main>
+
+<!-- EDYCJA SŁÓWKA (z nauki i z bazy) -->
+<div id="editBox" class="overlay hidden">
+  <div class="card">
+    <label>Polski</label>
+    <input type="text" id="ePl" autocapitalize="off" autocorrect="off" spellcheck="false">
+    <label>Hiszpański</label>
+    <input type="text" id="eEs" autocapitalize="off" autocorrect="off" spellcheck="false">
+    <p class="muted" id="eMsg"></p>
+    <div class="row">
+      <button id="eCancel">Anuluj</button>
+      <button id="eSave" class="primary">Zapisz</button>
+    </div>
+  </div>
+</div>
 
 <script>
 const KEY='slowka_es_v1';
@@ -194,33 +215,26 @@ function updateSetup(){
 // ---------- ocena ----------
 const strip=s=>s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/ł/g,'l').replace(/[^\p{L}\p{N}\s]/gu,'').replace(/\s+/g,' ').trim();
 const lc=s=>s.toLowerCase().replace(/\s+/g,' ').trim();
-// rodzajniki w odpowiedzi hiszpańskiej są opcjonalne w dowolnym miejscu (me gusta la chica = me gusta chica);
-// wpisany rodzajnik musi być jednak właściwy. "lo" celowo pominięte (lo siento).
+// W odpowiedzi hiszpańskiej rodzajniki (określone i nieokreślone) są ignorowane po obu stronach:
+// można je pominąć, dopisać lub podmienić (la/el/una...) — liczy się reszta zdania. "lo" celowo pominięte (lo siento).
 // Tekst w nawiasach to notatka: można go pominąć (lub wpisać bez nawiasów).
 const ARTS=new Set(['el','la','los','las','un','una','unos','unas']);
 const noPar=t=>t.replace(/\([^)]*\)/g,' ').replace(/\s+/g,' ').trim();
 const unPar=t=>t.replace(/[()]/g,'').replace(/\s+/g,' ').trim();
-// dopasowuje słowa odpowiedzi do słów wzorca; pominięte rodzajniki wzorca liczy. null = brak dopasowania
-function tokMatch(inp,tgt,skipArt){
-  let i=0,skipped=0;
-  for(const w of tgt){
-    if(i<inp.length&&w===inp[i]){i++;continue}
-    if(skipArt&&ARTS.has(strip(w))){skipped++;continue}
-    return null;
-  }
-  return i===inp.length?skipped:null;
-}
 function judge(input,targets,lang){
-  const skipArt=lang==='es';
+  const es=lang==='es';
   const A=lc(input).split(' '),B=strip(input).split(' ').filter(Boolean);
+  const same=(x,y)=>x.length===y.length&&x.every((w,i)=>w===y[i]);
+  const noArt=ts=>{const r=ts.filter(w=>!ARTS.has(strip(w)));return r.length?r:ts};
+  const norm=ts=>es?noArt(ts):ts;
   const cands=[];
   for(const orig of targets) for(const t of new Set([orig,noPar(orig),unPar(orig)])) if(t) cands.push([t,orig]);
-  for(const [t,o] of cands){
-    const sk=tokMatch(A,lc(t).split(' '),skipArt);
-    if(sk!==null) return sk===0&&t===o?{ok:true,exact:true}:{ok:true,exact:false,full:o};
-  }
   for(const [t,o] of cands)
-    if(tokMatch(B,strip(t).split(' ').filter(Boolean),skipArt)!==null) return {ok:true,exact:false,full:o};
+    if(same(A,lc(t).split(' '))) return t===o?{ok:true,exact:true}:{ok:true,exact:false,full:o};
+  for(const [t,o] of cands)
+    if(same(norm(A),norm(lc(t).split(' ')))) return {ok:true,exact:false,full:o};
+  for(const [t,o] of cands)
+    if(same(norm(B),norm(strip(t).split(' ').filter(Boolean)))) return {ok:true,exact:false,full:o};
   return {ok:false};
 }
 
@@ -248,25 +262,26 @@ function nextCard(){
   $('qWord').textContent=prompts(S.cur).join(' / ');
   $('answer').value='';$('answer').disabled=false;
   $('result').className='res';$('result').innerHTML='';
-  $('go').textContent='Sprawdź';
+  goLabel();
   $('bar').style.width=(S.done/S.total*100)+'%';
   $('answer').focus();
 }
+// pusta odpowiedź = "nie wiem": pokazuje wzór i liczy się jak błąd
+function goLabel(){if(S&&!S.checked) $('go').textContent='Sprawdź'}
 function reinsert(c,gap){S.queue.splice(Math.min(gap,S.queue.length),0,c)}
 function check(){
   const c=S.cur,val=$('answer').value;
-  if(!val.trim()) return;
-  const r=judge(val,targets(c),dir==='pl2es'?'es':'pl');
+  const r=val.trim()?judge(val,targets(c),dir==='pl2es'?'es':'pl'):{ok:false};
   const all=targets(c).join(' / ');
   const res=$('result');
   if(r.ok){
     res.className='res ok';
     res.innerHTML='✓ Dobrze'+(r.exact?'':'<small>Pełna forma: '+esc(r.full)+'</small>')+(targets(c).length>1?'<small>Wszystkie odpowiedniki: '+esc(all)+'</small>':'');
-    S.done++;
+    S.done++;c.done=true;
   }else{
     c.errors++;c.phase='retry';c.everWrong=true;
     res.className='res bad';
-    res.innerHTML='✗ Poprawnie: <b>'+esc(all)+'</b><small>Twoja odpowiedź: '+esc(val.trim())+'</small>';
+    res.innerHTML='✗ Poprawnie: <b>'+esc(all)+'</b>'+(val.trim()?'<small>Twoja odpowiedź: '+esc(val.trim())+'</small>':'<small>Słówko wróci do powtórki.</small>');
     reinsert(c,GAPS[Math.min(c.errors-1,GAPS.length-1)]);
   }
   $('answer').disabled=true;S.checked=true;$('go').textContent='Dalej';$('go').focus();
@@ -276,12 +291,13 @@ function finish(){
   const hard=S.cards.filter(c=>c.everWrong);
   $('sumText').textContent='Bez błędu: '+(S.cards.length-hard.length)+' z '+S.cards.length+'.';
   $('sumHard').innerHTML=hard.length?'<b>Do powtórki:</b><ul>'+hard.map(c=>'<li>'+esc(c.w.pl.join('/'))+' = '+esc(c.w.es.join('/'))+' ('+c.errors+'× błąd)</li>').join('')+'</ul>':'<p class="muted">Wszystko poprawnie. 🎉</p>';
-  S=null;show('summary');
+  S=null;
+  if($('base').classList.contains('hidden')) show('summary');
 }
 function esc(s){return s.replace(/[&<>"]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m]))}
 $('go').onclick=()=>S.checked?nextCard():check();
 $('answer').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();$('go').onclick()}});
-document.addEventListener('keydown',e=>{if(e.key==='Enter'&&S&&S.checked&&document.activeElement!==$('go')){$('go').onclick()}});
+document.addEventListener('keydown',e=>{if(e.key==='Enter'&&S&&S.checked&&document.activeElement!==$('go')&&document.activeElement.tagName!=='INPUT'&&$('editBox').classList.contains('hidden')&&$('quiz').offsetParent){$('go').onclick()}});
 $('quit').onclick=()=>{if(S&&confirm('Zakończyć cykl?')){S=null;show('setup')}};
 $('start').onclick=startSession;
 $('again').onclick=()=>show('setup');
@@ -302,6 +318,48 @@ function setDir(d){dir=d;$('dirPlEs').classList.toggle('active',d==='pl2es');$('
 $('dirPlEs').onclick=()=>setDir('pl2es');
 $('dirEsPl').onclick=()=>setDir('es2pl');
 
+// ---------- zmiany w bazie (z nauki i z zakładki Baza) ----------
+// sesja trzyma te same obiekty słówek co baza, więc edycja widoczna jest od razu w nauce
+function changed(){
+  saveSoon();updateSetup();
+  $('count').textContent=words.length;
+  if(!$('base').classList.contains('hidden')) renderList();
+  if(S&&S.cur) $('qWord').textContent=prompts(S.cur).join(' / ');
+  if(S&&S.total) $('bar').style.width=(S.done/S.total*100)+'%';
+}
+function removeWord(w){
+  const i=words.indexOf(w);if(i>=0) words.splice(i,1);
+  keys.delete(keyOf(w));
+  const c=S&&S.cards.find(x=>x.w===w);
+  if(c){
+    S.cards=S.cards.filter(x=>x!==c);S.queue=S.queue.filter(x=>x!==c);
+    if(c.done) S.done--;
+    S.total=S.cards.length;
+    if(S.cur===c){S.cur=null;changed();nextCard();return}
+  }
+  changed();
+}
+function forget(w){if(confirm('Usunąć „'+w.pl.join('/')+' = '+w.es.join('/')+'” z bazy?')) removeWord(w)}
+let editTarget=null;
+function openEdit(w){
+  editTarget=w;$('ePl').value=w.pl.join('/');$('eEs').value=w.es.join('/');$('eMsg').textContent='';
+  $('editBox').classList.remove('hidden');$('ePl').focus();
+}
+function closeEdit(){$('editBox').classList.add('hidden');editTarget=null}
+function saveEdit(){
+  const w=editTarget;if(!w) return;
+  const pl=splitAlt($('ePl').value),es=splitAlt($('eEs').value);
+  if(!pl.length||!es.length){$('eMsg').textContent='Wypełnij oba pola.';return}
+  const old=keyOf(w),nk=pl.join('/')+';'+es.join('/');
+  if(nk!==old&&keys.has(nk)){$('eMsg').textContent='Takie słówko już jest w bazie.';return}
+  keys.delete(old);keys.add(nk);w.pl=pl;w.es=es;delete w._s;
+  closeEdit();changed();
+}
+$('eSave').onclick=saveEdit;$('eCancel').onclick=closeEdit;
+$('editBox').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();saveEdit()}else if(e.key==='Escape') closeEdit()});
+$('qEdit').onclick=()=>{if(S&&S.cur) openEdit(S.cur.w)};
+$('qForget').onclick=()=>{if(S&&S.cur) forget(S.cur.w)};
+
 // ---------- zarządzanie bazą ----------
 // lista pokazuje porcjami (PAGE), a tekst do szukania liczony jest raz na słówko
 const PAGE=50;let shown=PAGE;
@@ -315,9 +373,11 @@ function renderList(){
     const t=w.pl.join('/')+' = '+w.es.join('/');
     const li=document.createElement('li');
     li.innerHTML='<span>'+esc(t)+(w.date?' <small class="muted">'+w.date+'</small>':'')+'</span>';
+    const e=document.createElement('button');e.className='small';e.textContent='Edytuj';
+    e.onclick=()=>openEdit(w);
     const b=document.createElement('button');b.className='small danger';b.textContent='Zapomnij';
-    b.onclick=()=>{if(confirm('Usunąć „'+t+'” z bazy?')){words.splice(words.indexOf(w),1);keys.delete(keyOf(w));saveSoon();renderList()}};
-    li.appendChild(b);frag.appendChild(li);
+    b.onclick=()=>forget(w);
+    li.append(e,b);frag.appendChild(li);
   });
   ul.replaceChildren(frag);
   if(!found.length) ul.innerHTML='<li class="muted">Brak słówek.</li>';
@@ -334,7 +394,7 @@ $('add').onclick=()=>{
   const w=parse($('addPl').value.trim()+';'+$('addEs').value.trim(),today())[0];
   if(!w){$('baseMsg').textContent='Wpisz słówko po obu stronach.';return}
   if(keys.has(keyOf(w))){$('baseMsg').textContent='Takie słówko już jest.';return}
-  words.push(w);keys.add(keyOf(w));saveSoon();renderList();
+  words.push(w);keys.add(keyOf(w));changed();
   $('addPl').value='';$('addEs').value='';$('addPl').focus();
   $('baseMsg').textContent='Dodano. Pamiętaj pobrać slowka.txt, żeby zachować zmiany w pliku.';
 };
@@ -347,7 +407,8 @@ $('file').onchange=e=>{
     const known=new Map(words.map(x=>[keyOf(x),x.date]));
     w.forEach(x=>{if(!x.date) x.date=known.get(keyOf(x))||today()});
     if(words.length&&!confirm('Wczytanie zastąpi obecną bazę ('+words.length+' słówek) plikiem ('+w.length+'). Kontynuować?')) return;
-    words=w;reindex();shown=PAGE;saveSoon();renderList();$('baseMsg').textContent='Wczytano '+w.length+' słówek.';
+    const hadCycle=!!S;
+    words=w;reindex();shown=PAGE;S=null;changed();$('baseMsg').textContent='Wczytano '+w.length+' słówek.'+(hadCycle?' Trwający cykl nauki został zakończony.':'');
   };
   r.readAsText(f,'utf-8');e.target.value='';
 };
