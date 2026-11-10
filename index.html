@@ -52,7 +52,7 @@ ul.words li span{flex:1;word-break:break-word}
 </head>
 <body>
 <main>
-<h1>Słówka hiszpańskie <small class="muted">wersja 7</small></h1>
+<h1>Słówka hiszpańskie <small class="muted">wersja 8</small></h1>
 <div class="tabs">
   <button id="tabLearn" class="active">Nauka</button>
   <button id="tabBase">Baza (<span id="count">0</span>)</button>
@@ -256,8 +256,8 @@ function pool(){
 }
 function updateSetup(){
   $('customRange').classList.toggle('hidden',$('range').value!=='custom');
-  const n=pool().length;
-  $('poolInfo').textContent='Pasuje słówek: '+n+' (z '+words.length+' w bazie)';
+  const p=pool();
+  $('poolInfo').textContent='Pasuje słówek: '+p.length+' (z '+words.length+' w bazie), do powtórki dziś: '+dueCount(p);
 }
 
 // ---------- ocena ----------
@@ -290,15 +290,30 @@ function judge(input,targets,lang){
 // po ilu kartach wraca błędne słówko — zależy od wielkości cyklu
 const gapsFor=n=>n<=10?[3,5,8]:n<=20?[5,10,15]:[10,15,20];
 const IDLE_MAX=120000; // przerwa dłuższa niż 2 min nie liczy się do czasu nauki
-// losuje n pierwszych elementów (częściowy Fisher–Yates) — nie miesza całej bazy
-function sample(a,n){a=a.slice();for(let i=0;i<n;i++){const j=i+Math.floor(Math.random()*(a.length-i));[a[i],a[j]]=[a[j],a[i]]}return a.slice(0,n)}
+// ---------- pudełka (kolejność według błędów) ----------
+// dobra odpowiedź za 1. razem = pudełko wyżej, błąd = pudełko 0; im wyższe pudełko, tym rzadziej słówko wraca
+const BOX_DAYS=[0,1,3,7,14,30];
+const boxOf=s=>!s?0:s.b!=null?s.b:(s.err?0:Math.min(s.ok,5));
+function plusDays(d,n){const x=new Date(d+'T00:00');x.setDate(x.getDate()+n);return x.toLocaleDateString('sv')}
+const dueOf=s=>s&&s.last?plusDays(s.last,BOX_DAYS[boxOf(s)]):'';
+// najpierw słówka, na które przyszła pora (najniższe pudełko i najwięcej błędów na początku),
+// potem — jeśli brakuje — te, których najdłużej nie było
+function pickCards(p,n){
+  const td=today();
+  const items=p.map(w=>{const s=stats[keyOf(w)];return {w,box:boxOf(s),err:s?s.err:0,due:dueOf(s),last:s&&s.last||'',r:Math.random()}});
+  const due=items.filter(x=>x.due<=td),later=items.filter(x=>x.due>td);
+  due.sort((a,b)=>a.box-b.box||b.err-a.err||a.r-b.r);
+  later.sort((a,b)=>a.last<b.last?-1:a.last>b.last?1:a.r-b.r);
+  return due.concat(later).slice(0,n).map(x=>x.w);
+}
+const dueCount=p=>{const td=today();let k=0;for(const w of p) if(dueOf(stats[keyOf(w)])<=td) k++;return k};
 function startSession(){
   const p=pool();
   if(!p.length){$('setupMsg').textContent=words.length?'Brak słówek w wybranym okresie.':'Baza jest pusta — dodaj słówka w zakładce Baza.';return}
   $('setupMsg').textContent='';
   const want=Math.floor(+$('size').value);
   const n=want>=1?Math.min(want,p.length):p.length;
-  const pick=sample(p,n);
+  const pick=pickCards(p,n);
   S={queue:pick.map(w=>({w,phase:'new',errors:0})),total:n,done:0,cards:[],cur:null,checked:false,
      gaps:gapsFor(n),dir,start:Date.now(),last:Date.now(),active:0};
   S.cards=S.queue.slice();
@@ -325,8 +340,8 @@ function check(){
   const r=val.trim()?judge(val,targets(c),dir==='pl2es'?'es':'pl'):{ok:false};
   const now=Date.now();S.active+=Math.min(now-S.last,IDLE_MAX);S.last=now;
   const s=stats[keyOf(c.w)]||(stats[keyOf(c.w)]={n:0,ok:0,err:0});
-  if(!c.seen){c.seen=true;s.n++;if(r.ok) s.ok++}
-  if(!r.ok) s.err++;
+  if(!c.seen){c.seen=true;const b=boxOf(s);s.n++;if(r.ok){s.ok++;s.b=Math.min(b+1,5)}}
+  if(!r.ok){s.err++;s.b=0}
   s.last=today();saveSoon();
   const all=targets(c).join(' / ');
   const res=$('result');
@@ -501,7 +516,7 @@ function renderList(){
   found.slice(0,shown).forEach(w=>{
     const t=w.pl.join('/')+' = '+w.es.join('/');
     const li=document.createElement('li');
-    li.innerHTML='<span>'+esc(t)+(w.date?' <small class="muted">'+w.date+'</small>':'')+'</span>';
+    li.innerHTML='<span>'+esc(t)+' <small class="muted">'+(w.date?w.date+' · ':'')+'pudełko '+boxOf(stats[keyOf(w)])+'</small>'+'</span>';
     const e=document.createElement('button');e.className='small';e.textContent='Edytuj';
     e.onclick=()=>openEdit(w);
     const b=document.createElement('button');b.className='small danger';b.textContent='Zapomnij';
