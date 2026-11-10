@@ -22,9 +22,9 @@ button.primary{background:var(--accent);border-color:var(--accent);color:#fff;fo
 button.active{border-color:var(--accent);color:var(--accent);font-weight:600}
 button.danger{color:var(--bad)}
 button.small{min-height:36px;padding:0 10px;font-size:.85rem}
-input[type=text],select{width:100%;min-height:48px;padding:0 12px;border-radius:12px;border:1px solid var(--line);background:var(--bg)}
+input[type=text],input[type=date],input[type=number],select{width:100%;min-height:48px;padding:0 12px;border-radius:12px;border:1px solid var(--line);background:var(--bg)}
 label{display:block;font-size:.85rem;color:var(--muted);margin:10px 0 4px}
-.row{display:flex;gap:8px}.row>*{flex:1}
+.row{display:flex;gap:8px}.row>*{flex:1;min-width:0}
 .hidden,.overlay.hidden{display:none}
 .overlay{position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;padding:16px;z-index:10}
 .overlay .card{width:100%;max-width:520px;margin:0}
@@ -38,14 +38,25 @@ ul.words{list-style:none;padding:0;margin:8px 0 0;max-height:50vh;overflow:auto}
 ul.words li{display:flex;align-items:center;gap:8px;padding:8px 0;border-top:1px solid var(--line)}
 ul.words li span{flex:1;word-break:break-word}
 .muted{color:var(--muted);font-size:.9rem}
+.cal-head{align-items:center}.cal-head b{text-align:center;flex:3}
+.cal{display:grid;grid-template-columns:repeat(7,1fr);gap:4px;text-align:center;margin-top:10px}
+.cal .dn{font-size:.75rem;color:var(--muted)}
+.cal button{min-height:40px;padding:0;border-radius:10px;font-size:.9rem}
+.cal button.on{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
+.cal button.sel{box-shadow:0 0 0 2px var(--text) inset}
+.cal button.today{text-decoration:underline}
+.day{border-top:1px solid var(--line);padding:8px 0}
+.day small{display:block;color:var(--muted)}
+.big{font-size:1.4rem;font-weight:700}
 </style>
 </head>
 <body>
 <main>
-<h1>Słówka hiszpańskie</h1>
+<h1>Słówka hiszpańskie <small class="muted">wersja 7</small></h1>
 <div class="tabs">
   <button id="tabLearn" class="active">Nauka</button>
   <button id="tabBase">Baza (<span id="count">0</span>)</button>
+  <button id="tabProg">Postępy</button>
 </div>
 
 <!-- NAUKA: ustawienia -->
@@ -129,6 +140,33 @@ ul.words li span{flex:1;word-break:break-word}
     <ul class="words" id="list"></ul>
   </div>
 </section>
+
+<!-- POSTĘPY: kalendarz + podsumowanie -->
+<section id="progress" class="hidden">
+  <div class="card">
+    <div class="row cal-head">
+      <button id="calPrev" class="small">‹</button>
+      <b id="calTitle"></b>
+      <button id="calNext" class="small">›</button>
+    </div>
+    <div class="cal" id="cal"></div>
+    <p class="muted">Podświetlone dni = dni nauki. Kliknij dzień, żeby zobaczyć jego podsumowanie.</p>
+  </div>
+  <div class="card">
+    <label>Zakres podsumowania</label>
+    <div class="row">
+      <div><label>Od</label><input type="date" id="sFrom"></div>
+      <div><label>Do</label><input type="date" id="sTo"></div>
+    </div>
+    <div class="row" style="margin-top:8px">
+      <button class="small" data-r="1">Dziś</button>
+      <button class="small" data-r="7">7 dni</button>
+      <button class="small" data-r="30">30 dni</button>
+      <button class="small" data-r="all">Wszystko</button>
+    </div>
+    <div id="statOut" style="margin-top:12px"></div>
+  </div>
+</section>
 </main>
 
 <!-- EDYCJA SŁÓWKA (z nauki i z bazy) -->
@@ -184,7 +222,13 @@ function parse(text,def){
 const keyOf=w=>w.pl.join('/')+';'+w.es.join('/');
 const fmt=w=>keyOf(w)+(w.date?';'+w.date:'');
 function serialize(){return '# Format: polski;hiszpański;data dodania RRRR-MM-DD   (kilka odpowiedników rozdzielaj znakiem /, data jest opcjonalna)\n'+words.map(fmt).join('\n')+'\n'}
-function save(){try{localStorage.setItem(KEY,serialize())}catch(e){}}
+// historia sesji (kalendarz, podsumowania) i statystyki słówek (ile razy, ile błędów) — osobno od bazy
+const HKEY='slowka_hist_v1',SKEY='slowka_stats_v1';
+let hist=[],stats={};
+function save(){
+  try{localStorage.setItem(KEY,serialize())}catch(e){}
+  try{localStorage.setItem(HKEY,JSON.stringify(hist));localStorage.setItem(SKEY,JSON.stringify(stats))}catch(e){}
+}
 // zapis z opóźnieniem — seria zmian = jeden zapis; na wyjściu zapisujemy od razu
 let st=null;
 function saveSoon(){clearTimeout(st);st=setTimeout(()=>{st=null;save()},300)}
@@ -194,7 +238,11 @@ document.addEventListener('visibilitychange',()=>{if(document.hidden)flush()});
 // indeks do szybkiego sprawdzania duplikatów; przy wczytaniu usuwa też powtórzenia
 let keys=new Set();
 function reindex(){keys=new Set();words=words.filter(w=>{const k=keyOf(w);if(keys.has(k))return false;keys.add(k);return true})}
-function load(){try{const t=localStorage.getItem(KEY);if(t){words=parse(t,today());reindex()}}catch(e){}}
+function load(){
+  try{const t=localStorage.getItem(KEY);if(t){words=parse(t,today());reindex()}}catch(e){}
+  try{hist=JSON.parse(localStorage.getItem(HKEY))||[]}catch(e){hist=[]}
+  try{stats=JSON.parse(localStorage.getItem(SKEY))||{}}catch(e){stats={}}
+}
 
 // ---------- zakres dat ----------
 function addDays(n){const d=new Date();d.setDate(d.getDate()+n);return d.toLocaleDateString('sv')}
@@ -239,7 +287,9 @@ function judge(input,targets,lang){
 }
 
 // ---------- sesja ----------
-const GAPS=[3,5,8];
+// po ilu kartach wraca błędne słówko — zależy od wielkości cyklu
+const gapsFor=n=>n<=10?[3,5,8]:n<=20?[5,10,15]:[10,15,20];
+const IDLE_MAX=120000; // przerwa dłuższa niż 2 min nie liczy się do czasu nauki
 // losuje n pierwszych elementów (częściowy Fisher–Yates) — nie miesza całej bazy
 function sample(a,n){a=a.slice();for(let i=0;i<n;i++){const j=i+Math.floor(Math.random()*(a.length-i));[a[i],a[j]]=[a[j],a[i]]}return a.slice(0,n)}
 function startSession(){
@@ -249,7 +299,8 @@ function startSession(){
   const want=Math.floor(+$('size').value);
   const n=want>=1?Math.min(want,p.length):p.length;
   const pick=sample(p,n);
-  S={queue:pick.map(w=>({w,phase:'new',errors:0})),total:n,done:0,cards:[],cur:null,checked:false};
+  S={queue:pick.map(w=>({w,phase:'new',errors:0})),total:n,done:0,cards:[],cur:null,checked:false,
+     gaps:gapsFor(n),dir,start:Date.now(),last:Date.now(),active:0};
   S.cards=S.queue.slice();
   show('quiz');nextCard();
 }
@@ -272,6 +323,11 @@ function reinsert(c,gap){S.queue.splice(Math.min(gap,S.queue.length),0,c)}
 function check(){
   const c=S.cur,val=$('answer').value;
   const r=val.trim()?judge(val,targets(c),dir==='pl2es'?'es':'pl'):{ok:false};
+  const now=Date.now();S.active+=Math.min(now-S.last,IDLE_MAX);S.last=now;
+  const s=stats[keyOf(c.w)]||(stats[keyOf(c.w)]={n:0,ok:0,err:0});
+  if(!c.seen){c.seen=true;s.n++;if(r.ok) s.ok++}
+  if(!r.ok) s.err++;
+  s.last=today();saveSoon();
   const all=targets(c).join(' / ');
   const res=$('result');
   if(r.ok){
@@ -282,34 +338,106 @@ function check(){
     c.errors++;c.phase='retry';c.everWrong=true;
     res.className='res bad';
     res.innerHTML='✗ Poprawnie: <b>'+esc(all)+'</b>'+(val.trim()?'<small>Twoja odpowiedź: '+esc(val.trim())+'</small>':'<small>Słówko wróci do powtórki.</small>');
-    reinsert(c,GAPS[Math.min(c.errors-1,GAPS.length-1)]);
+    reinsert(c,S.gaps[Math.min(c.errors-1,S.gaps.length-1)]);
   }
   $('answer').disabled=true;S.checked=true;$('go').textContent='Dalej';$('go').focus();
   $('bar').style.width=(S.done/S.total*100)+'%';
 }
 function finish(){
   const hard=S.cards.filter(c=>c.everWrong);
-  $('sumText').textContent='Bez błędu: '+(S.cards.length-hard.length)+' z '+S.cards.length+'.';
+  const rec=recordSession();
+  $('sumText').innerHTML=rec?'Poprawnie za pierwszym razem: <span class="big">'+score(rec.ok,rec.n)+'</span><br><span class="muted">Czas nauki: '+fmtMin(rec.sec)+'</span>':'Brak odpowiedzi w tym cyklu.';
   $('sumHard').innerHTML=hard.length?'<b>Do powtórki:</b><ul>'+hard.map(c=>'<li>'+esc(c.w.pl.join('/'))+' = '+esc(c.w.es.join('/'))+' ('+c.errors+'× błąd)</li>').join('')+'</ul>':'<p class="muted">Wszystko poprawnie. 🎉</p>';
   S=null;
-  if($('base').classList.contains('hidden')) show('summary');
+  if(!$('quiz').classList.contains('hidden')) show('summary');
 }
+// zapis zakończonej (lub przerwanej) sesji do historii; liczą się karty, na które padła odpowiedź
+function recordSession(){
+  if(!S||S.recorded) return null;
+  S.recorded=true;
+  const tried=S.cards.filter(c=>c.seen);
+  if(!tried.length) return null;
+  const rec={d:new Date(S.start).toLocaleDateString('sv'),t:S.start,sec:Math.round(S.active/1000),
+             ok:tried.filter(c=>c.done&&!c.everWrong).length,n:tried.length,dir:S.dir};
+  hist.push(rec);saveSoon();
+  return rec;
+}
+const pct=(ok,n)=>n?Math.round(ok/n*100):0;
+const score=(ok,n)=>ok+'/'+n+' ('+pct(ok,n)+'%)';
+const fmtMin=sec=>sec>0&&sec<60?'<1 min':Math.round(sec/60)+' min';
 function esc(s){return s.replace(/[&<>"]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m]))}
 $('go').onclick=()=>S.checked?nextCard():check();
 $('answer').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();$('go').onclick()}});
 document.addEventListener('keydown',e=>{if(e.key==='Enter'&&S&&S.checked&&document.activeElement!==$('go')&&document.activeElement.tagName!=='INPUT'&&$('editBox').classList.contains('hidden')&&$('quiz').offsetParent){$('go').onclick()}});
-$('quit').onclick=()=>{if(S&&confirm('Zakończyć cykl?')){S=null;show('setup')}};
+$('quit').onclick=()=>{if(S&&confirm('Zakończyć cykl?')){recordSession();S=null;show('setup')}};
 $('start').onclick=startSession;
 $('again').onclick=()=>show('setup');
 
 // ---------- widoki ----------
 function show(id){
-  for(const s of ['setup','quiz','summary','base']) $(s).classList.toggle('hidden',s!==id);
-  $('tabLearn').classList.toggle('active',id!=='base');
+  for(const s of ['setup','quiz','summary','base','progress']) $(s).classList.toggle('hidden',s!==id);
+  $('tabLearn').classList.toggle('active',id!=='base'&&id!=='progress');
   $('tabBase').classList.toggle('active',id==='base');
+  $('tabProg').classList.toggle('active',id==='progress');
   if(id==='base') renderList();
   if(id==='setup') updateSetup();
+  if(id==='progress') renderProgress();
 }
+$('tabProg').onclick=()=>show('progress');
+
+// ---------- postępy: kalendarz + podsumowanie zakresu ----------
+let calMonth=new Date();calMonth.setDate(1);
+const MONTHS=['styczeń','luty','marzec','kwiecień','maj','czerwiec','lipiec','sierpień','wrzesień','październik','listopad','grudzień'];
+function renderCalendar(){
+  const days=new Set(hist.map(h=>h.d));
+  const y=calMonth.getFullYear(),m=calMonth.getMonth();
+  $('calTitle').textContent=MONTHS[m]+' '+y;
+  const from=$('sFrom').value,to=$('sTo').value,td=today();
+  const cal=$('cal');cal.innerHTML='';
+  for(const n of ['pn','wt','śr','cz','pt','sb','nd']){const d=document.createElement('div');d.className='dn';d.textContent=n;cal.appendChild(d)}
+  const lead=(new Date(y,m,1).getDay()+6)%7;
+  for(let i=0;i<lead;i++) cal.appendChild(document.createElement('div'));
+  const last=new Date(y,m+1,0).getDate();
+  for(let d=1;d<=last;d++){
+    const ds=new Date(y,m,d).toLocaleDateString('sv');
+    const b=document.createElement('button');b.textContent=d;
+    if(days.has(ds)) b.classList.add('on');
+    if(from&&to&&ds>=from&&ds<=to) b.classList.add('sel');
+    if(ds===td) b.classList.add('today');
+    b.onclick=()=>{$('sFrom').value=ds;$('sTo').value=ds;renderProgress()};
+    cal.appendChild(b);
+  }
+}
+function renderStats(){
+  const from=$('sFrom').value||'0000-01-01',to=$('sTo').value||'9999-12-31';
+  const list=hist.filter(h=>h.d>=from&&h.d<=to);
+  const out=$('statOut');
+  if(!list.length){out.innerHTML='<p class="muted">Brak sesji w tym zakresie.</p>';return}
+  const sum=(a,k)=>a.reduce((s,h)=>s+h[k],0);
+  const byDay={};for(const h of list)(byDay[h.d]=byDay[h.d]||[]).push(h);
+  const dayKeys=Object.keys(byDay).sort().reverse();
+  let html='<div class="big">'+score(sum(list,'ok'),sum(list,'n'))+'</div>'+
+    '<p class="muted">Dni nauki: '+dayKeys.length+' · sesje: '+list.length+' · czas: '+fmtMin(sum(list,'sec'))+'</p>';
+  for(const d of dayKeys){
+    const a=byDay[d];
+    html+='<div class="day"><b>'+d+'</b> — '+score(sum(a,'ok'),sum(a,'n'))+' · '+a.length+' '+sesje(a.length)+' · '+fmtMin(sum(a,'sec'));
+    for(const h of a.slice().sort((x,y)=>x.t-y.t))
+      html+='<small>'+new Date(h.t).toLocaleTimeString('pl',{hour:'2-digit',minute:'2-digit'})+' · '+(h.dir==='pl2es'?'PL→ES':'ES→PL')+' · '+score(h.ok,h.n)+' · '+fmtMin(h.sec)+'</small>';
+    html+='</div>';
+  }
+  out.innerHTML=html;
+}
+const sesje=n=>n===1?'sesja':(n%10>=2&&n%10<=4&&(n%100<12||n%100>14))?'sesje':'sesji';
+function renderProgress(){renderCalendar();renderStats()}
+function setStatRange(r){
+  if(r==='all'){$('sFrom').value='';$('sTo').value=''}
+  else{$('sFrom').value=addDays(-(+r-1));$('sTo').value=today()}
+  renderProgress();
+}
+document.querySelectorAll('#progress [data-r]').forEach(b=>b.onclick=()=>setStatRange(b.dataset.r));
+$('sFrom').onchange=$('sTo').onchange=renderProgress;
+$('calPrev').onclick=()=>{calMonth.setMonth(calMonth.getMonth()-1);renderCalendar()};
+$('calNext').onclick=()=>{calMonth.setMonth(calMonth.getMonth()+1);renderCalendar()};
 $('range').onchange=$('dFrom').onchange=$('dTo').onchange=updateSetup;
 $('sizeAll').onclick=()=>{$('size').value=Math.max(pool().length,1)};
 $('tabLearn').onclick=()=>show(S?'quiz':'setup');
@@ -329,7 +457,7 @@ function changed(){
 }
 function removeWord(w){
   const i=words.indexOf(w);if(i>=0) words.splice(i,1);
-  keys.delete(keyOf(w));
+  keys.delete(keyOf(w));delete stats[keyOf(w)];
   const c=S&&S.cards.find(x=>x.w===w);
   if(c){
     S.cards=S.cards.filter(x=>x!==c);S.queue=S.queue.filter(x=>x!==c);
@@ -353,6 +481,7 @@ function saveEdit(){
   const old=keyOf(w),nk=pl.join('/')+';'+es.join('/');
   if(nk!==old&&keys.has(nk)){$('eMsg').textContent='Takie słówko już jest w bazie.';return}
   keys.delete(old);keys.add(nk);w.pl=pl;w.es=es;delete w._s;
+  if(nk!==old&&stats[old]){stats[nk]=stats[old];delete stats[old]}
   closeEdit();changed();
 }
 $('eSave').onclick=saveEdit;$('eCancel').onclick=closeEdit;
@@ -422,6 +551,7 @@ $('download').onclick=()=>{
 load();
 $('count').textContent=words.length;
 updateSetup();
+$('sFrom').value=addDays(-6);$('sTo').value=today();
 if(!words.length){$('setupMsg').textContent='Baza jest pusta — wczytaj slowka.txt w zakładce Baza.'}
 if('serviceWorker' in navigator&&location.protocol.startsWith('http')) navigator.serviceWorker.register('sw.js').catch(()=>{});
 </script>
