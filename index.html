@@ -52,7 +52,7 @@ ul.words li span{flex:1;word-break:break-word}
 </head>
 <body>
 <main>
-<h1>Słówka hiszpańskie <small class="muted">wersja 8</small></h1>
+<h1>Słówka hiszpańskie <small class="muted">wersja 9</small></h1>
 <div class="tabs">
   <button id="tabLearn" class="active">Nauka</button>
   <button id="tabBase">Baza (<span id="count">0</span>)</button>
@@ -224,10 +224,11 @@ const fmt=w=>keyOf(w)+(w.date?';'+w.date:'');
 function serialize(){return '# Format: polski;hiszpański;data dodania RRRR-MM-DD   (kilka odpowiedników rozdzielaj znakiem /, data jest opcjonalna)\n'+words.map(fmt).join('\n')+'\n'}
 // historia sesji (kalendarz, podsumowania) i statystyki słówek (ile razy, ile błędów) — osobno od bazy
 const HKEY='slowka_hist_v1',SKEY='slowka_stats_v1';
-let hist=[],stats={};
+const MKEY='slowka_meta_v1';
+let hist=[],stats={},meta={sess:0}; // meta.sess = licznik rozpoczętych sesji
 function save(){
   try{localStorage.setItem(KEY,serialize())}catch(e){}
-  try{localStorage.setItem(HKEY,JSON.stringify(hist));localStorage.setItem(SKEY,JSON.stringify(stats))}catch(e){}
+  try{localStorage.setItem(HKEY,JSON.stringify(hist));localStorage.setItem(SKEY,JSON.stringify(stats));localStorage.setItem(MKEY,JSON.stringify(meta))}catch(e){}
 }
 // zapis z opóźnieniem — seria zmian = jeden zapis; na wyjściu zapisujemy od razu
 let st=null;
@@ -242,6 +243,7 @@ function load(){
   try{const t=localStorage.getItem(KEY);if(t){words=parse(t,today());reindex()}}catch(e){}
   try{hist=JSON.parse(localStorage.getItem(HKEY))||[]}catch(e){hist=[]}
   try{stats=JSON.parse(localStorage.getItem(SKEY))||{}}catch(e){stats={}}
+  try{meta=JSON.parse(localStorage.getItem(MKEY))||{sess:hist.length}}catch(e){meta={sess:hist.length}}
 }
 
 // ---------- zakres dat ----------
@@ -256,8 +258,8 @@ function pool(){
 }
 function updateSetup(){
   $('customRange').classList.toggle('hidden',$('range').value!=='custom');
-  const p=pool();
-  $('poolInfo').textContent='Pasuje słówek: '+p.length+' (z '+words.length+' w bazie), do powtórki dziś: '+dueCount(p);
+  const p=pool(),g=groups(p,meta.sess+1);
+  $('poolInfo').textContent='Pasuje słówek: '+p.length+' (z '+words.length+' w bazie) — nowe: '+g.new.length+', trudne gotowe do powtórki: '+g.hard.length+', trudne czekające: '+g.wait.length+', umiem: '+g.known.length+', były już dziś: '+g.today.length;
 }
 
 // ---------- ocena ----------
@@ -290,32 +292,57 @@ function judge(input,targets,lang){
 // po ilu kartach wraca błędne słówko — zależy od wielkości cyklu
 const gapsFor=n=>n<=10?[3,5,8]:n<=20?[5,10,15]:[10,15,20];
 const IDLE_MAX=120000; // przerwa dłuższa niż 2 min nie liczy się do czasu nauki
-// ---------- pudełka (kolejność według błędów) ----------
-// dobra odpowiedź za 1. razem = pudełko wyżej, błąd = pudełko 0; im wyższe pudełko, tym rzadziej słówko wraca
-const BOX_DAYS=[0,1,3,7,14,30];
-const boxOf=s=>!s?0:s.b!=null?s.b:(s.err?0:Math.min(s.ok,5));
-function plusDays(d,n){const x=new Date(d+'T00:00');x.setDate(x.getDate()+n);return x.toLocaleDateString('sv')}
-const dueOf=s=>s&&s.last?plusDays(s.last,BOX_DAYS[boxOf(s)]):'';
-// najpierw słówka, na które przyszła pora (najniższe pudełko i najwięcej błędów na początku),
-// potem — jeśli brakuje — te, których najdłużej nie było
-function pickCards(p,n){
-  const td=today();
-  const items=p.map(w=>{const s=stats[keyOf(w)];return {w,box:boxOf(s),err:s?s.err:0,due:dueOf(s),last:s&&s.last||'',r:Math.random()}});
-  const due=items.filter(x=>x.due<=td),later=items.filter(x=>x.due>td);
-  due.sort((a,b)=>a.box-b.box||b.err-a.err||a.r-b.r);
-  later.sort((a,b)=>a.last<b.last?-1:a.last>b.last?1:a.r-b.r);
-  return due.concat(later).slice(0,n).map(x=>x.w);
+// ---------- wybór słówek do sesji ----------
+// nowe = jeszcze nie padło; trudne = ostatnio błąd / "nie wiem"; umiem = ostatnio dobrze za 1. razem.
+// Trudne wraca dopiero po kilku sesjach (pierwsze błędne w sesji po 3 sesjach przerwy, kolejne o 1 sesję później)
+// i nigdy tego samego dnia, w którym był błąd.
+const HARD_SKIP=3;
+const legacyHard=s=>s.b!=null?s.b===0:s.err>0; // słówka ocenione jeszcze w wersji z pudełkami
+const isHard=s=>s.hard!=null?s.hard:legacyHard(s);
+function kind(w,k,td){
+  const s=stats[keyOf(w)];
+  if(!s||!s.n) return 'new';
+  if(!isHard(s)) return 'known';
+  return (s.dueSess||0)<=k&&(s.missDay||s.last||'')<td?'hard':'wait';
 }
-const dueCount=p=>{const td=today();let k=0;for(const w of p) if(dueOf(stats[keyOf(w)])<=td) k++;return k};
+function shuffle(a){for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]]}return a}
+// słówka, które dziś już były w jakiejś sesji, trafiają do grupy "today" i nie wchodzą do kolejnych sesji tego dnia
+function groups(p,k){
+  const td=today(),g={new:[],hard:[],known:[],wait:[],today:[]};
+  for(const w of p){const s=stats[keyOf(w)];g[s&&s.last===td?'today':kind(w,k,td)].push(w)}
+  return g;
+}
+// skład: trudne (do 1 przy sesji do 20, do 3 powyżej), 1 znane, reszta nowe; kolejność w sesji wymieszana.
+// Gdy brakuje nowych: najpierw znane, których nie było od min. 3 dni (najdawniejsze pierwsze),
+// potem dodatkowe trudne — łącznie najwyżej 1/4 sesji.
+function pickCards(p,n,k){
+  const g=groups(p,k),st=w=>stats[keyOf(w)]||{};
+  const hardAll=shuffle(g.hard).sort((a,b)=>(st(a).dueSess||0)-(st(b).dueSess||0));
+  const knownAll=shuffle(g.known).sort((a,b)=>(st(a).last||'')<(st(b).last||'')?-1:(st(a).last||'')>(st(b).last||'')?1:0);
+  const hard=hardAll.slice(0,Math.min(n<=20?1:3,n));
+  const known=knownAll.slice(0,Math.min(1,n-hard.length));
+  let out=shuffle(g.new).slice(0,n-hard.length-known.length).concat(hard,known);
+  if(out.length<n){
+    const old=addDays(-3);
+    out=out.concat(knownAll.slice(known.length).filter(w=>(st(w).last||'')<=old).slice(0,n-out.length));
+    const hardLimit=Math.max(hard.length,Math.floor(n/4));
+    out=out.concat(hardAll.slice(hard.length,hardLimit).slice(0,n-out.length));
+  }
+  return shuffle(out);
+}
 function startSession(){
   const p=pool();
   if(!p.length){$('setupMsg').textContent=words.length?'Brak słówek w wybranym okresie.':'Baza jest pusta — dodaj słówka w zakładce Baza.';return}
   $('setupMsg').textContent='';
   const want=Math.floor(+$('size').value);
   const n=want>=1?Math.min(want,p.length):p.length;
-  const pick=pickCards(p,n);
-  S={queue:pick.map(w=>({w,phase:'new',errors:0})),total:n,done:0,cards:[],cur:null,checked:false,
-     gaps:gapsFor(n),dir,start:Date.now(),last:Date.now(),active:0};
+  const pick=pickCards(p,n,meta.sess+1);
+  if(!pick.length){$('setupMsg').textContent='Brak słówek do nauki teraz — dodaj nowe słówka w zakładce Baza albo wróć jutro.';return}
+  if(pick.length<n&&!confirm('Brakuje słówek — ta sesja będzie miała '+pick.length+' (zamiast '+n+'). Warto dodać nowe słówka w zakładce Baza. Zacząć?')) return;
+  meta.sess++;
+  S={queue:pick.map(w=>({w,phase:'new',errors:0})),total:pick.length,done:0,cards:[],cur:null,checked:false,
+     gaps:gapsFor(pick.length),dir,start:Date.now(),last:Date.now(),active:0,k:meta.sess,miss:0};
+  saveSoon();
   S.cards=S.queue.slice();
   show('quiz');nextCard();
 }
@@ -340,8 +367,11 @@ function check(){
   const r=val.trim()?judge(val,targets(c),dir==='pl2es'?'es':'pl'):{ok:false};
   const now=Date.now();S.active+=Math.min(now-S.last,IDLE_MAX);S.last=now;
   const s=stats[keyOf(c.w)]||(stats[keyOf(c.w)]={n:0,ok:0,err:0});
-  if(!c.seen){c.seen=true;const b=boxOf(s);s.n++;if(r.ok){s.ok++;s.b=Math.min(b+1,5)}}
-  if(!r.ok){s.err++;s.b=0}
+  if(!c.seen){c.seen=true;s.n++;if(r.ok){s.ok++;s.hard=false}}
+  if(!r.ok){
+    s.err++;
+    if(!c.missed){c.missed=true;s.hard=true;s.missDay=today();s.dueSess=S.k+HARD_SKIP+1+S.miss++}
+  }
   s.last=today();saveSoon();
   const all=targets(c).join(' / ');
   const res=$('result');
@@ -507,6 +537,7 @@ $('qForget').onclick=()=>{if(S&&S.cur) forget(S.cur.w)};
 // ---------- zarządzanie bazą ----------
 // lista pokazuje porcjami (PAGE), a tekst do szukania liczony jest raz na słówko
 const PAGE=50;let shown=PAGE;
+const KIND_LABEL={new:'nowe',hard:'trudne',wait:'trudne (wróci później)',known:'umiem'};
 const sx=w=>w._s||(w._s=strip(w.pl.join('/')+' '+w.es.join('/')));
 function renderList(){
   $('count').textContent=words.length;
@@ -516,7 +547,7 @@ function renderList(){
   found.slice(0,shown).forEach(w=>{
     const t=w.pl.join('/')+' = '+w.es.join('/');
     const li=document.createElement('li');
-    li.innerHTML='<span>'+esc(t)+' <small class="muted">'+(w.date?w.date+' · ':'')+'pudełko '+boxOf(stats[keyOf(w)])+'</small>'+'</span>';
+    li.innerHTML='<span>'+esc(t)+' <small class="muted">'+(w.date?w.date+' · ':'')+KIND_LABEL[kind(w,meta.sess+1,today())]+'</small>'+'</span>';
     const e=document.createElement('button');e.className='small';e.textContent='Edytuj';
     e.onclick=()=>openEdit(w);
     const b=document.createElement('button');b.className='small danger';b.textContent='Zapomnij';
